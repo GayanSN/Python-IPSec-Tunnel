@@ -8,6 +8,7 @@ from threading import Thread
 import netifaces as ni
 from hashlib import md5
 from Crypto.Cipher import AES
+import getpass
 
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
@@ -98,14 +99,8 @@ def create_espt(data):
 
     return esp_trailer
 
-def cal_authdata(esph, data, espt):
 
-    auth_data = esph + data + espt
-    auth_data =  md5(auth_data).digest()
-
-    return auth_data
-
-def create_ip(esp, authdata):
+def create_ip(esp):
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ESP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -128,7 +123,7 @@ def create_ip(esp, authdata):
 
     ip_header = pack('!BBHHHBBH4s4s', ip_ihl_ver, ip_tos, ip_tot_len, ip_id, ip_frag_off, ip_ttl_val, ip_prot, ip_checksum, ip_saddr, ip_daddr)
 
-    packet = ip_header + esp + authdata
+    packet = ip_header + esp
 
     sock.sendto(packet, (dest, 0))  
 
@@ -151,9 +146,7 @@ def send_data(fd,):
 
             esp_h = esp_h + enc_payload
 
-            auth_data = cal_authdata(esp_h, enc_payload, esp_trailer) ##calculate hash for athentication data
-
-            create_ip(esp_h, auth_data)   ##create a new IP Header, place the ESP Header inside the new IP Header and send to the destination
+            create_ip(esp_h)   ##create a new IP Header, place the ESP Header inside the new IP Header and send to the destination
 
         except Exception as e:
             print(e)
@@ -165,7 +158,7 @@ def recv_data(fd,):
     while True:
         try:
             s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_IP))
-            s.bind(('enp0s3', 0))
+            s.bind((iface, 0))
 
             data = s.recvfrom(65565)[0]
             ip = IPv4(data[14:])
@@ -179,9 +172,9 @@ def recv_data(fd,):
 
                 dec_payload = os.write(fd, dec_payload)   ##write the original packet to the virtual interface
 
-        except Exception as e:
-            print(e)
-            exit(1)
+        except Exception:
+            print(f"\nTunnel Establishment Failed!\nPlease Verify the Secret Key and Try Again!\n")
+            os._exit(1)
 
 
 def ipsec_tunnel():
@@ -197,19 +190,28 @@ def ipsec_tunnel():
             tr.join()
 
         except KeyboardInterrupt:
-            print("\nClosing IPSec Tunnel...")
+            print("\nClosing IPSec Tunnel...\n")
             exit(1)
 
 
 if __name__ == "__main__":
 
-    dest = "192.168.1.106"     ##Destination IP address
-    key = 'Cisco@NIBM202ft'    ##Encryption Key
+    try:
+        dest = input("\nEnter the IP address of Remote Host: ")     ##Destination IP address
+        key = str(getpass.getpass("Enter the Encryption Key: "))    ##Encryption Key
+        
+        if_list = ni.interfaces()
+        iface = input("Select the Interface --> {} : ".format(if_list))
+    
+    except KeyboardInterrupt:
+        exit(1)
 
-    ip = ni.ifaddresses('enp0s3')[ni.AF_INET][0]['addr']  ##get the IP address of the interface 
+    ip = ni.ifaddresses(iface)[ni.AF_INET][0]['addr']  ##get the IP address of the interface 
 
     fd = tun_open('asa0')
 
-    print(f"Opening IPSec Tunnel...")
+    print(f"\nOpening IPSec Tunnel...")
 
     ipsec_tunnel()             ##calling the main function
+
+	
